@@ -177,7 +177,23 @@ func TestCleanupWaitsForPods(t *testing.T) {
 	}
 }
 
-func TestGetMetricsWaitsForEPPRegistry(t *testing.T) {
+func TestGetMetricsReturnsBoilerplateHTTP200(t *testing.T) {
+	gomega.RegisterTestingT(t)
+
+	const boilerplate = "controller_runtime_active_workers 0\ncertwatcher_read_errors_total 0\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(boilerplate))
+	}))
+	t.Cleanup(srv.Close)
+
+	joined := strings.Join(GetMetrics(srv.URL), "\n")
+	if !strings.Contains(joined, "certwatcher_read_errors_total") || strings.Contains(joined, "llm_d_epp_info") {
+		t.Fatalf("GetMetrics must return the first HTTP 200 body: %q", joined)
+	}
+}
+
+func TestCallerRetriesUntilEPPRegistry(t *testing.T) {
 	gomega.RegisterTestingT(t)
 
 	const boilerplate = "controller_runtime_active_workers 0\ncertwatcher_read_errors_total 0\n"
@@ -201,6 +217,6 @@ func TestGetMetricsWaitsForEPPRegistry(t *testing.T) {
 		gomega.Not(gomega.ContainSubstring("certwatcher_read_errors_total")),
 	))
 	if hits.Load() < 2 {
-		t.Fatalf("assertion succeeded after %d scrapes; first 200 OK must be retried until llm_d_epp_info is present", hits.Load())
+		t.Fatalf("assertion succeeded after %d scrapes; caller Eventually must retry past the first 200 OK", hits.Load())
 	}
 }

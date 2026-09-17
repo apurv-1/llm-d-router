@@ -250,6 +250,8 @@ const metricsScrapeRetryTimeout = 10 * time.Second
 // GetMetrics fetches Prometheus metrics from metricsURL.
 // Transient connection and non-200 errors are retried for metricsScrapeRetryTimeout.
 // HTTP 200 can still be controller-runtime boilerplate before llm_d_epp_info is registered.
+// Callers that need the EPP registry must Eventually until that series (or the
+// specific counter they assert) is present. GetMetrics does not wait for it.
 func GetMetrics(metricsURL string) []string {
 	var body []byte
 	gomega.Eventually(func() error {
