@@ -241,8 +241,8 @@ func SubstituteMany(inputs []string, substitutions map[string]string) []string {
 	return outputs
 }
 
-// GetMetrics fetches the current Prometheus metrics from the given metrics URL.
-// Retries on transient connection errors (e.g. the previous EPP pod is still terminating).
+// GetMetrics fetches Prometheus metrics from metricsURL.
+// HTTP 200 can still be controller-runtime boilerplate before the EPP custom registry is live.
 func GetMetrics(metricsURL string) []string {
 	var body []byte
 	gomega.Eventually(func() error {
@@ -255,8 +255,14 @@ func GetMetrics(metricsURL string) []string {
 			return fmt.Errorf("unexpected status %d", resp.StatusCode)
 		}
 		body, err = io.ReadAll(resp.Body)
-		return err
-	}, 10*time.Second, 1*time.Second).Should(gomega.Succeed())
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(string(body), "llm_d_epp_info") {
+			return fmt.Errorf("EPP metrics registry is not present")
+		}
+		return nil
+	}, 3*time.Minute, 1*time.Second).Should(gomega.Succeed())
 
 	return strings.Split(string(body), "\n")
 }

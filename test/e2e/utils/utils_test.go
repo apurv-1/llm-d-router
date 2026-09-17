@@ -19,9 +19,14 @@ package utils
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -168,5 +173,32 @@ func TestCleanupWaitsForPods(t *testing.T) {
 	}
 	if deleted, err := resources.Deleted(ctx); !deleted || err != nil {
 		t.Fatalf("cleanup did not finish after router Pod deletion: %t, %v", deleted, err)
+	}
+}
+
+func TestGetMetricsWaitsForEPPRegistry(t *testing.T) {
+	gomega.RegisterTestingT(t)
+
+	const boilerplate = "controller_runtime_active_workers 0\ncertwatcher_read_errors_total 0\n"
+	const ready = "controller_runtime_active_workers 0\nllm_d_epp_info{commit=\"test\"} 1\n"
+
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		body := boilerplate
+		if hits.Add(1) > 1 {
+			body = ready
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+
+	lines := GetMetrics(srv.URL)
+	joined := strings.Join(lines, "\n")
+	if strings.Contains(joined, "certwatcher_read_errors_total") || !strings.Contains(joined, "llm_d_epp_info") {
+		t.Fatalf("GetMetrics returned the first scrape before llm_d_epp_info: %q", joined)
+	}
+	if hits.Load() < 2 {
+		t.Fatalf("GetMetrics returned after %d scrapes; first 200 OK must be retried until llm_d_epp_info is present", hits.Load())
 	}
 }
