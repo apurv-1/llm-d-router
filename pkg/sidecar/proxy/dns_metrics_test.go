@@ -85,6 +85,45 @@ func TestServeMetrics_PlainHTTP(t *testing.T) {
 	require.NoError(t, <-errCh)
 }
 
+func TestServeMetrics_BindsMetricsPort(t *testing.T) {
+	held, err := fwknet.ReserveListener()
+	require.NoError(t, err)
+	port := held.Addr().(*net.TCPAddr).Port
+	require.NoError(t, held.Close())
+
+	s := &Server{logger: logr.Discard(), config: Config{MetricsPort: port}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.serveMetrics(ctx) }()
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	require.Eventually(t, func() bool {
+		resp, err := client.Get("http://" + addr + "/metrics")
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	}, 2*time.Second, 20*time.Millisecond, "expected plaintext /metrics on Config.MetricsPort")
+
+	cancel()
+	require.NoError(t, <-errCh)
+}
+
+func TestServeMetrics_ListenError(t *testing.T) {
+	held, err := net.Listen("tcp", ":0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = held.Close() })
+
+	s := &Server{
+		logger: logr.Discard(),
+		config: Config{MetricsPort: held.Addr().(*net.TCPAddr).Port},
+	}
+	require.Error(t, s.serveMetrics(context.Background()))
+}
+
 func TestServeMetrics_TLS(t *testing.T) {
 	certDir := t.TempDir()
 	writeSelfSignedCert(t, certDir)
