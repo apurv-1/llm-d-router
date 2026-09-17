@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
@@ -193,12 +194,13 @@ func TestGetMetricsWaitsForEPPRegistry(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	lines := GetMetrics(srv.URL)
-	joined := strings.Join(lines, "\n")
-	if strings.Contains(joined, "certwatcher_read_errors_total") || !strings.Contains(joined, "llm_d_epp_info") {
-		t.Fatalf("GetMetrics returned the first scrape before llm_d_epp_info: %q", joined)
-	}
+	gomega.Eventually(func() string {
+		return strings.Join(GetMetrics(srv.URL), "\n")
+	}, 2*time.Second, 10*time.Millisecond).Should(gomega.And(
+		gomega.ContainSubstring("llm_d_epp_info"),
+		gomega.Not(gomega.ContainSubstring("certwatcher_read_errors_total")),
+	))
 	if hits.Load() < 2 {
-		t.Fatalf("GetMetrics returned after %d scrapes; first 200 OK must be retried until llm_d_epp_info is present", hits.Load())
+		t.Fatalf("assertion succeeded after %d scrapes; first 200 OK must be retried until llm_d_epp_info is present", hits.Load())
 	}
 }

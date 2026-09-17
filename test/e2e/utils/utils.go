@@ -241,8 +241,15 @@ func SubstituteMany(inputs []string, substitutions map[string]string) []string {
 	return outputs
 }
 
+// metricsScrapeRetryTimeout is the budget for connection and non-200 retries.
+// Registry presence (llm_d_epp_info) is waited on by the caller's
+// Eventually(ReadyTimeout). Nesting ReadyTimeout here would consume that
+// outer budget on a single scrape, including when READY_TIMEOUT is overridden.
+const metricsScrapeRetryTimeout = 10 * time.Second
+
 // GetMetrics fetches Prometheus metrics from metricsURL.
-// HTTP 200 can still be controller-runtime boilerplate before the EPP custom registry is live.
+// Transient connection and non-200 errors are retried for metricsScrapeRetryTimeout.
+// HTTP 200 can still be controller-runtime boilerplate before llm_d_epp_info is registered.
 func GetMetrics(metricsURL string) []string {
 	var body []byte
 	gomega.Eventually(func() error {
@@ -255,20 +262,14 @@ func GetMetrics(metricsURL string) []string {
 			return fmt.Errorf("unexpected status %d", resp.StatusCode)
 		}
 		body, err = io.ReadAll(resp.Body)
-		if err != nil {
-			return err
-		}
-		if !strings.Contains(string(body), "llm_d_epp_info") {
-			return fmt.Errorf("EPP metrics registry is not present")
-		}
-		return nil
-	}, 3*time.Minute, 1*time.Second).Should(gomega.Succeed())
+		return err
+	}, metricsScrapeRetryTimeout, 1*time.Second).Should(gomega.Succeed())
 
 	return strings.Split(string(body), "\n")
 }
 
 // GetCounterMetric fetches the current value of a Prometheus counter metric from the given metrics URL.
-// Retries on transient connection errors (e.g. the previous EPP pod is still terminating).
+// Missing series parse as 0. Connection retries live in GetMetrics.
 //
 //nolint:unparam // metricName may vary in future test cases
 func GetCounterMetric(metricsURL, metricName, labelMatch string) int {
