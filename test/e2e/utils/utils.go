@@ -245,7 +245,10 @@ func SubstituteMany(inputs []string, substitutions map[string]string) []string {
 // Registry presence (llm_d_epp_info) is waited on by the caller's
 // Eventually(ReadyTimeout). Nesting ReadyTimeout here would consume that
 // outer budget on a single scrape, including when READY_TIMEOUT is overridden.
-const metricsScrapeRetryTimeout = 10 * time.Second
+const (
+	metricsScrapeRetryTimeout  = 10 * time.Second
+	metricsScrapeRetryInterval = time.Second
+)
 
 // GetMetrics fetches Prometheus metrics from metricsURL.
 // Transient connection and non-200 errors are retried for metricsScrapeRetryTimeout.
@@ -253,21 +256,32 @@ const metricsScrapeRetryTimeout = 10 * time.Second
 // Callers that need the EPP registry must Eventually until that series (or the
 // specific counter they assert) is present. GetMetrics does not wait for it.
 func GetMetrics(metricsURL string) []string {
-	var body []byte
-	gomega.Eventually(func() error {
-		resp, err := http.Get(metricsURL)
-		if err != nil {
-			return err
+	deadline := time.Now().Add(metricsScrapeRetryTimeout)
+	var lastErr error
+	for {
+		body, err := scrapeMetrics(metricsURL)
+		if err == nil {
+			return strings.Split(string(body), "\n")
 		}
-		defer func() { _ = resp.Body.Close() }()
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("unexpected status %d", resp.StatusCode)
+		lastErr = err
+		if !time.Now().Add(metricsScrapeRetryInterval).Before(deadline) {
+			gomega.Expect(lastErr).ShouldNot(gomega.HaveOccurred())
+			return nil
 		}
-		body, err = io.ReadAll(resp.Body)
-		return err
-	}, metricsScrapeRetryTimeout, 1*time.Second).Should(gomega.Succeed())
+		time.Sleep(metricsScrapeRetryInterval)
+	}
+}
 
-	return strings.Split(string(body), "\n")
+func scrapeMetrics(metricsURL string) ([]byte, error) {
+	resp, err := http.Get(metricsURL)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+	return io.ReadAll(resp.Body)
 }
 
 // GetCounterMetric fetches the current value of a Prometheus counter metric from the given metrics URL.

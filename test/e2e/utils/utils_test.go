@@ -27,7 +27,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -178,8 +177,6 @@ func TestCleanupWaitsForPods(t *testing.T) {
 }
 
 func TestGetMetricsReturnsBoilerplateHTTP200(t *testing.T) {
-	gomega.RegisterTestingT(t)
-
 	const boilerplate = "controller_runtime_active_workers 0\ncertwatcher_read_errors_total 0\n"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -194,8 +191,6 @@ func TestGetMetricsReturnsBoilerplateHTTP200(t *testing.T) {
 }
 
 func TestCallerRetriesUntilEPPRegistry(t *testing.T) {
-	gomega.RegisterTestingT(t)
-
 	const boilerplate = "controller_runtime_active_workers 0\ncertwatcher_read_errors_total 0\n"
 	const ready = "controller_runtime_active_workers 0\nllm_d_epp_info{commit=\"test\"} 1\n"
 
@@ -210,13 +205,19 @@ func TestCallerRetriesUntilEPPRegistry(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	gomega.Eventually(func() string {
-		return strings.Join(GetMetrics(srv.URL), "\n")
-	}, 2*time.Second, 10*time.Millisecond).Should(gomega.And(
-		gomega.ContainSubstring("llm_d_epp_info"),
-		gomega.Not(gomega.ContainSubstring("certwatcher_read_errors_total")),
-	))
+	deadline := time.Now().Add(2 * time.Second)
+	var joined string
+	for {
+		joined = strings.Join(GetMetrics(srv.URL), "\n")
+		if strings.Contains(joined, "llm_d_epp_info") && !strings.Contains(joined, "certwatcher_read_errors_total") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("did not see llm_d_epp_info without certwatcher boilerplate: %q", joined)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if hits.Load() < 2 {
-		t.Fatalf("assertion succeeded after %d scrapes; caller Eventually must retry past the first 200 OK", hits.Load())
+		t.Fatalf("assertion succeeded after %d scrapes; caller retry must pass the first 200 OK", hits.Load())
 	}
 }
