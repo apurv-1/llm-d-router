@@ -85,6 +85,10 @@ func TestServeMetrics_PlainHTTP(t *testing.T) {
 	require.NoError(t, <-errCh)
 }
 
+// TestServeMetrics_BindsMetricsPort covers the nil MetricsListener path.
+// serveMetrics calls net.Listen on Config.MetricsPort, so the reserved
+// listener is closed first. That free-then-bind window is required to
+// exercise the fallback.
 func TestServeMetrics_BindsMetricsPort(t *testing.T) {
 	held, err := fwknet.ReserveListener()
 	require.NoError(t, err)
