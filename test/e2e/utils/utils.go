@@ -264,7 +264,7 @@ func GetMetrics(metricsURL string) []string {
 			return strings.Split(string(body), "\n")
 		}
 		lastErr = err
-		if !time.Now().Add(metricsScrapeRetryInterval).Before(deadline) {
+		if time.Now().After(deadline) {
 			gomega.Expect(lastErr).ShouldNot(gomega.HaveOccurred())
 			return nil
 		}
