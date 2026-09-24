@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"math"
 	"math/rand/v2"
@@ -88,7 +89,7 @@ func main() {
 	coalesceWindowMs := parseEnvInt("COALESCE_WINDOW_MS", 5)
 	maxCoalescedCallers := parseEnvInt("MAX_COALESCED_CALLERS", 50)
 
-	if err := os.WriteFile("/tmp/test_running", []byte("running"), 0644); err != nil {
+	if err := writeTestRunningMarker("/tmp/test_running"); err != nil {
 		log.Printf("Warning: could not create test_running marker: %v", err)
 	}
 	// Removed defer — cleaned up explicitly before all exit points to satisfy gocritic.
@@ -510,6 +511,30 @@ func generateTrainingBatch(batchSize int) []latencypredictorclient.TrainingEntry
 	}
 
 	return entries
+}
+
+// writeTestRunningMarker creates path with O_EXCL, which fails when path is an existing symlink.
+// A stale entry is removed and the exclusive create is retried once.
+func writeTestRunningMarker(path string) error {
+	f, err := openExclusive(path)
+	if errors.Is(err, os.ErrExist) {
+		if rmErr := os.Remove(path); rmErr != nil {
+			return rmErr
+		}
+		f, err = openExclusive(path)
+	}
+	if err != nil {
+		return err
+	}
+	_, err = f.Write([]byte("running"))
+	if err1 := f.Close(); err1 != nil && err == nil {
+		err = err1
+	}
+	return err
+}
+
+func openExclusive(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644) //nolint:gosec // G304: path is the fixed marker or a unit-test temp path
 }
 
 // parseEnvInt reads an integer environment variable, logging a warning on parse
