@@ -35,6 +35,9 @@ import (
 	"golang.org/x/time/rate"
 )
 
+// testRunningMarker is the liveness file created at startup and removed on every exit path.
+const testRunningMarker = "/tmp/test_running"
+
 type TestMetrics struct {
 	TotalRequests         int64
 	SuccessfulRequests    int64
@@ -89,7 +92,7 @@ func main() {
 	coalesceWindowMs := parseEnvInt("COALESCE_WINDOW_MS", 5)
 	maxCoalescedCallers := parseEnvInt("MAX_COALESCED_CALLERS", 50)
 
-	if err := writeTestRunningMarker("/tmp/test_running"); err != nil {
+	if err := writeTestRunningMarker(testRunningMarker); err != nil {
 		log.Printf("Warning: could not create test_running marker: %v", err)
 	}
 	// Removed defer — cleaned up explicitly before all exit points to satisfy gocritic.
@@ -128,7 +131,7 @@ func main() {
 
 	if err := predictor.Start(testCtx); err != nil {
 		cancel()
-		os.Remove("/tmp/test_running")
+		os.Remove(testRunningMarker)
 		logger.Error(err, "Failed to start predictor")
 		return
 	}
@@ -419,11 +422,11 @@ func main() {
 
 	if failedReq > 0 {
 		logger.Info("WARNING: Test had failed prediction requests", "failed_count", failedReq)
-		os.Remove("/tmp/test_running")
+		os.Remove(testRunningMarker)
 		os.Exit(1)
 	}
 
-	os.Remove("/tmp/test_running")
+	os.Remove(testRunningMarker)
 	logger.Info("Test completed successfully!")
 }
 
