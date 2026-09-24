@@ -20,6 +20,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -90,8 +91,9 @@ func assertRunningMarker(t *testing.T, path string) {
 	if !info.Mode().IsRegular() {
 		t.Fatalf("%s mode = %s, want a regular file", path, info.Mode())
 	}
-	if info.Mode().Perm() != 0644 {
-		t.Fatalf("%s perm = %o, want 644", path, info.Mode().Perm())
+	// OpenFile applies the process umask to the requested mode.
+	if got, want := info.Mode().Perm(), os.FileMode(0644)&^processUmask(); got != want {
+		t.Fatalf("%s perm = %o, want %o", path, got, want)
 	}
 	got, err := os.ReadFile(path) //nolint:gosec // G304: path is a temp file created in this test
 	if err != nil {
@@ -100,4 +102,12 @@ func assertRunningMarker(t *testing.T, path string) {
 	if string(got) != "running" {
 		t.Fatalf("marker = %q, want %q", got, "running")
 	}
+}
+
+// processUmask reads the process file-mode mask. Umask(0) replaces it, so the
+// previous value is restored before returning.
+func processUmask() os.FileMode {
+	mask := syscall.Umask(0)
+	syscall.Umask(mask)
+	return os.FileMode(mask)
 }
